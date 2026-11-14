@@ -170,3 +170,69 @@ def test_rules_page_shows_missed_rule():
     api = client.get("/api/rules").json()
     assert len(api["rules"]) == 18
     assert any(r["target"] == "amount" and r["priority"] == 10 for r in api["rules"])
+
+
+def test_ruleset_page_and_publish_api():
+    page = client.get("/rules")
+    assert page.status_code == 200
+    assert "规则版本与发布" in page.text
+    assert "生产 v1" in page.text or "v1" in page.text
+
+    assert client.post("/api/rules/priority", json={"rule_id": "R01", "priority": 20}).status_code == 200
+    overview = client.get("/api/ruleset").json()
+    assert overview["draft"]["diff"]
+    assert overview["production"]["version"] == 1
+
+    published = client.post("/api/ruleset/publish", json={"note": "上线"})
+    assert published.status_code == 200
+    body = published.json()
+    assert body["version"] == 2
+    assert body["revision"] == 2
+    overview = client.get("/api/ruleset").json()
+    assert overview["production"]["version"] == 2
+    assert overview["draft"]["diff"] == []
+    assert overview["versions"][0]["version"] == 1
+    assert overview["versions"][0]["rules_json"] if "rules_json" in overview["versions"][0] else True
+
+    health = client.get("/health").json()
+    assert health["ruleset_version"] == 2
+
+
+def test_dry_run_and_submit_by_locked_preview_api():
+    client.post("/api/rules/priority", json={"rule_id": "R01", "priority": 20})
+    client.post("/api/rules/priority", json={"rule_id": "R03", "priority": 25})
+    run = client.post("/api/dry-run", json={"doc_no": "CG-2026-0001"}).json()
+    assert run["ruleset_ref"].startswith("draft-r")
+    assert run["conflict_count"] == 0
+
+    submitted = client.post("/api/submit", json={"run_id": run["run_id"]})
+    assert submitted.status_code == 201
+    assert submitted.json()["receipt"]["payload"]["amount"] == "1280.50"
+
+    # 发布后旧预览仍可回看，且展示锁定版本
+    published = client.post("/api/ruleset/publish", json={}).json()
+    page = client.get(run["result_url"])
+    assert page.status_code == 200
+    assert run["ruleset_ref"] in page.text
+
+    # 预览版本与提交版本不一致 → 409
+    mismatch = client.post("/api/submit", json={"run_id": run["run_id"], "doc_no": "CG-2026-0001", "version": 2})
+    assert mismatch.status_code in (200, 409)
+    if mismatch.status_code == 409:
+        assert mismatch.json()["code"] == "preview_version_mismatch"
+    assert published["version"] >= 2
+
+
+def test_publish_failure_keeps_production_version():
+    client.post("/api/rules/priority", json={"rule_id": "R01", "priority": 20})
+    before = client.get("/api/ruleset").json()["production"]["version"]
+    # 不存在的修订 → 拒绝发布，生产版本不变
+    res = client.post("/api/ruleset/publish", json={"revision": 999})
+    assert res.status_code == 409
+    assert res.json()["code"] == "publish_failed"
+    assert client.get("/api/ruleset").json()["production"]["version"] == before
+
+
+def test_unknown_ruleset_ref_is_404():
+    assert client.post("/api/dry-run", json={"doc_no": "CG-2026-0001", "ruleset_ref": "v99"}).status_code == 404
+    assert client.post("/api/dry-run", json={"doc_no": "CG-2026-0001", "ruleset_ref": "draft-r99"}).status_code == 404

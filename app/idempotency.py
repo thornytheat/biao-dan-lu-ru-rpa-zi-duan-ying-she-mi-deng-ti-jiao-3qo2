@@ -27,6 +27,7 @@ def rules_digest(rules: list[dict]) -> str:
                 "expr": r.get("expr", ""),
                 "priority": int(r.get("priority", 0)),
                 "transform": list(r.get("transform") or []),
+                "enabled": bool(r.get("enabled", True)),
             }
             for r in sorted(rules, key=lambda r: r["id"])
         ]
@@ -34,9 +35,10 @@ def rules_digest(rules: list[dict]) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def run_id(doc_no: str, version: int, digest: str) -> str:
-    material = f"{doc_no}|{int(version)}|{digest}"
-    return "run_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
+def run_id(doc_no: str, version: int, material: str) -> str:
+    """run_id 绑定单据+版本+规则版本引用+规则快照+payload；任一变化即换新预览。"""
+    payload = f"{doc_no}|{int(version)}|{material}"
+    return "run_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def receipt_no(doc_no: str, version: int) -> str:

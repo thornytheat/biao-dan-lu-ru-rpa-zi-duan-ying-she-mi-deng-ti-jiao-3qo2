@@ -21,9 +21,20 @@ def clean_state():
 
     store.init_db()
     with store.connect() as conn:
-        # 每个用例都从 sample_data 重新 seed，避免上一个用例改过源单据影响下一个
-        for table in ("submissions", "audit_events", "previews", "rule_overrides", "source_docs", "meta"):
+        # 每个用例都从 sample_data 重新 seed，避免上一个用例改过源单据/草稿影响下一个
+        for table in (
+            "submissions",
+            "audit_events",
+            "previews",
+            "rule_overrides",
+            "ruleset_events",
+            "rule_draft_revisions",
+            "ruleset_versions",
+            "source_docs",
+            "meta",
+        ):
             conn.execute(f"DELETE FROM {table}")
         conn.commit()
     store.seed_docs()
+    store.ensure_initial_ruleset()
     yield

@@ -4,9 +4,10 @@
 {% block meta %}<span class="dot ok"></span>服务正常 · 单据 {{ docs|length }} · 规则 {{ rules|length }}{% endblock %}
 {% block actions %}
 <a class="btn secondary small" href="/review">复核与回执</a>
+<a class="btn secondary small" href="/rules">规则版本</a>
 <a class="btn small" href="/workbench?doc=CG-2026-0001&run=1">去工作台</a>
 {% endblock %}
-{% block status_left %}样例数据 {{ docs|length }} 张 · 映射规则 {{ rules|length }} 条 · 提交记录 {{ submission_count }} 条 · 不依赖外网{% endblock %}
+{% block status_left %}样例数据 {{ docs|length }} 张 · 映射规则 {{ rules|length }} 条 · 生产 v{{ overview.production.version if overview.production else '—' }} · 提交记录 {{ submission_count }} 条{% endblock %}
 {% block status_right %}{{ app_name }} · 规则集 {{ ruleset }}{% endblock %}
 
 {% block content %}
@@ -32,6 +33,16 @@
     <div class="k-label">目标契约字段</div>
     <div class="k-value">{{ fields|length }}</div>
     <div class="k-note">{{ contract.form_title }}</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">生产规则版本</div>
+    <div class="k-value">v{{ overview.production.version if overview.production else '—' }}</div>
+    <div class="k-note">{{ overview.production.submission_count if overview.production else 0 }} 次提交 · 不可变</div>
+  </div>
+  <div class="kpi {% if overview.draft and overview.draft.diff %}warn{% endif %}">
+    <div class="k-label">草稿修订</div>
+    <div class="k-value">{{ overview.draft.ref if overview.draft else '—' }}</div>
+    <div class="k-note">{{ overview.draft.diff|length if overview.draft else 0 }} 条待发布改动</div>
   </div>
   <div class="kpi {% if submission_count %}ok{% endif %}">
     <div class="k-label">提交记录</div>

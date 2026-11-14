@@ -21,23 +21,35 @@ STATUS_LABEL = {
 }
 
 
-def effective_rules(base_rules: list[dict], overrides: dict[str, dict]) -> list[dict]:
-    """把库里的优先级/启停覆盖叠加到样例规则上；被禁用的规则直接剔除。"""
+def normalize_rules(rules: list[dict]) -> list[dict]:
+    """统一规则快照形状：补齐 enabled/base_priority 等字段，保留停用规则（供历史查看）。"""
     out: list[dict] = []
-    for rule in base_rules:
+    for rule in rules:
         item = dict(rule)
         item["transform"] = list(rule.get("transform") or [])
-        item["base_priority"] = int(rule.get("priority", 0))
-        item["enabled"] = True
+        item["base_priority"] = int(rule.get("base_priority", rule.get("priority", 0)))
+        item["priority"] = int(rule.get("priority", 0))
+        item["enabled"] = bool(rule.get("enabled", True))
+        item["expr"] = rule.get("expr", "") or ""
+        item["note"] = rule.get("note", "") or ""
+        out.append(item)
+    return out
+
+
+def active_rules(rules: list[dict]) -> list[dict]:
+    """求值只使用启用中的规则；停用规则仍保留在版本快照里可查。"""
+    return [rule for rule in rules if rule.get("enabled", True)]
+
+
+def effective_rules(base_rules: list[dict], overrides: dict[str, dict]) -> list[dict]:
+    """把 legacy 优先级/启停覆盖叠加到样例规则上（仅用于旧数据迁移）。"""
+    out: list[dict] = normalize_rules(base_rules)
+    for item in out:
         override = overrides.get(item["id"]) or {}
         if "priority" in override and override["priority"] is not None:
             item["priority"] = int(override["priority"])
-        else:
-            item["priority"] = item["base_priority"]
         if override.get("enabled") is False:
             item["enabled"] = False
-            continue
-        out.append(item)
     return out
 
 

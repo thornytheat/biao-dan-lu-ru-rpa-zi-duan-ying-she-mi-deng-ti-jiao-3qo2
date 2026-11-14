@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}规则版本与发布 · {{ app_name }}{% endblock %}
+{% block crumb %}规则版本与发布{% endblock %}
+{% block meta %}<span class="dot {% if overview.draft and overview.draft.diff %}warn{% else %}ok{% endif %}"></span>
+生产 v{{ overview.production.version if overview.production else '—' }} ·
+草稿 {{ overview.draft.ref if overview.draft else '—' }}（{{ overview.draft.diff|length if overview.draft else 0 }} 条未发布改动）{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/api/ruleset">看 JSON</a>
+<a class="btn small" href="/workbench?doc={{ selected_doc }}&run=1">回映射工作台</a>
+{% endblock %}
+{% block status_left %}生产版本不可变 · 草稿只增不改 · 发布 = 整套版本原子切换，失败保留旧版{% endblock %}
+{% block status_right %}{{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">规则版本与发布</h1>
+    <p class="page-sub">
+      规则调整只进入独立草稿；草稿可以按样例单据预览，确认后一次性整套发布为新的生产版本。
+      发布前后，已有预览和已提交单据仍锁定它们自己的规则快照——字段依据与提交内容永远可查、不会被覆盖。
+    </p>
+  </div>
+</div>
+
+<div class="kpi-strip">
+  <div class="kpi ok">
+    <div class="k-label">生产版本</div>
+    <div class="k-value">v{{ overview.production.version if overview.production else '—' }}</div>
+    <div class="k-note">所有新单据默认使用的版本</div>
+  </div>
+  <div class="kpi {% if overview.draft and overview.draft.diff %}warn{% endif %}">
+    <div class="k-label">草稿修订</div>
+    <div class="k-value">{{ overview.draft.ref if overview.draft else '—' }}</div>
+    <div class="k-note">{{ overview.draft.diff|length if overview.draft else 0 }} 条待发布改动</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">历史生产版本</div>
+    <div class="k-value">{{ overview.versions|length }}</div>
+    <div class="k-note">只增不改，全部可查</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">预览锁定的版本</div>
+    <div class="k-value">{{ current.ref }}</div>
+    <div class="k-note">{{ current.kind_label }}{% if current.published_version %} · 已发布为 v{{ current.published_version }}{% endif %}</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">按此版本提交</div>
+    <div class="k-value">{{ (overview.draft.submission_count if overview.draft else 0) if current.kind == 'draft' else (overview.production.submission_count if overview.production else 0) }}</div>
+    <div class="k-note">submissions 计数</div>
+  </div>
+</div>
+
+<div class="split">
+  <div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>生产版本（不可变）</h2>
+        <div class="panel-actions"><span class="tag ok">当前 v{{ overview.production.version if overview.production else '—' }}</span></div>
+      </div>
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead><tr><th>版本</th><th>发布信息</th><th>规则摘要</th><th class="num">提交数</th><th class="num">预览数</th><th></th></tr></thead>
+          <tbody>
+          {% for v in overview.versions|reverse %}
+            <tr {% if v.is_production %}class="selected"{% endif %}>
+              <td><code>{{ v.ref }}</code>{% if v.is_production %} <span class="tag ok">生产中</span>{% endif %}
+                <div class="small muted">{{ v.published_at }}</div></td>
+              <td class="small">来自 {{ '草稿 r' ~ v.revision if v.revision else '初始化' }}
+                {% if v.note %}<div class="muted">{{ v.note }}</div>{% endif %}</td>
+              <td class="small">{{ v.digest[:12] }}…<div class="muted">{{ v.rules|length }} 条规则</div></td>
+              <td class="num">{{ v.submission_count }}</td>
+              <td class="num">{{ v.preview_count }}</td>
+              <td>
+                <a class="small" href="/workbench?doc={{ selected_doc }}&run=1&rules={{ v.ref }}">按 {{ v.ref }} 预览</a>
+                · <a class="small" href="/rules?version={{ v.ref }}">查看规则</a>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-actions">
+        <span class="small muted" style="align-self:center">
+          「提交数」按规则快照内容统计：草稿预览后发布成同版本规则的提交也计入该版本。历史规则原文始终保留。
+        </span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>草稿修订（按样例预览 → 整套发布）</h2>
+        <div class="panel-actions">
+          {% if overview.draft.diff %}<span class="tag warn">{{ overview.draft.diff|length }} 条未发布改动</span>
+          {% else %}<span class="tag ok">与生产版本一致</span>{% endif %}
+        </div>
+      </div>
+      {% if overview.draft %}
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>草稿修订</th><th>基于</th><th>差异</th><th>预览样例</th><th class="num">提交数</th></tr></thead>
+          <tbody>
+          {% for d in overview.drafts|reverse %}
+            <tr {% if d.is_head %}class="selected"{% endif %}>
+              <td><code>{{ d.ref }}</code>{% if d.is_head %} <span class="tag warn">当前草稿</span>{% endif %}
+                <div class="small muted">{{ d.created_at }} · {{ d.source }}</div></td>
+              <td>v{{ d.base_version }}</td>
+              <td class="small"><code>{{ d.digest[:12] }}…</code></td>
+              <td><a class="small" href="/workbench?doc={{ selected_doc }}&run=1&rules={{ d.ref }}">按 {{ d.ref }} 预览</a></td>
+              <td class="num">{{ d.submission_count }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty"><strong>还没有草稿修订</strong>在工作台调整规则后会自动生成。</div>
+      {% endif %}
+
+      {% if overview.draft and overview.draft.diff %}
+      <div class="panel-head"><h3 style="margin:0">当前草稿相对生产 v{{ overview.production.version }} 的改动</h3></div>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>规则</th><th>目标字段</th><th>改动</th></tr></thead>
+          <tbody>
+          {% for item in overview.draft.diff %}
+            <tr><td><code>{{ item.rule_id }}</code></td><td><code>{{ item.target }}</code></td>
+              <td class="small">{% for ch in item.changes %}<div>{{ ch }}</div>{% endfor %}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <div class="panel-actions">
+        <form method="post" action="/workbench/publish" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="hidden" name="doc" value="{{ selected_doc }}">
+          <input type="text" name="note" placeholder="发布说明（可选）" style="min-width:220px">
+          <button type="submit" {% if not overview.draft %}disabled{% endif %}>整套发布草稿 {{ overview.draft.ref if overview.draft else '' }}</button>
+        </form>
+        <form method="post" action="/workbench/discard">
+          <input type="hidden" name="doc" value="{{ selected_doc }}">
+          <button type="submit" class="secondary">丢弃草稿改动</button>
+        </form>
+        <span class="small muted" style="align-self:center">
+          发布在单个事务内完成：新增生产版本 + 从新版本复制下一份草稿；失败则回滚，旧版原样保留。
+        </span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>发布 / 编辑审计（{{ overview.events|length }} 条）</h2>
+        <div class="panel-actions"><span class="tag">publish / draft_edit / draft_seed</span></div>
+      </div>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>时间</th><th>动作</th><th>引用</th><th>版本 / 修订</th><th>说明</th></tr></thead>
+          <tbody>
+          {% for e in overview.events %}
+            <tr>
+              <td class="small muted nowrap">{{ e.created_at }}</td>
+              <td>{% if e.action == 'publish' %}<span class="tag ok">publish</span>{% else %}<span class="tag warn">{{ e.action }}</span>{% endif %}</td>
+              <td><code>{{ e.ref or '—' }}</code></td>
+              <td class="small">{% if e.version %}v{{ e.version }}{% endif %}{% if e.revision %} r{{ e.revision }}{% endif %}</td>
+              <td class="small">{{ e.detail }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">还没有规则版本事件。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section class="panel pane-sticky">
+      <div class="panel-head">
+        <h2>锁定版本 {{ current.ref }} 的规则原文</h2>
+        <div class="panel-actions">
+          <span class="tag {% if current.kind == 'production' %}ok{% else %}warn{% endif %}">{{ current.kind_label }}</span>
+        </div>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted">
+          摘要 <code>{{ current.digest[:16] }}…</code>
+          {% if current.kind == 'draft' and current.published_version %}· 已作为 v{{ current.published_version }} 发布
+          {% elif current.kind == 'draft' %}· 尚未发布{% endif %}
+        </p>
+      </div>
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead><tr><th>规则</th><th>目标</th><th>表达式</th><th>优先级</th><th>启用</th></tr></thead>
+          <tbody>
+          {% for r in current.rules %}
+            <tr {% if not r.enabled %}class="muted"{% endif %}>
+              <td><code>{{ r.id }}</code></td>
+              <td><code>{{ r.target }}</code></td>
+              <td class="small"><code>{{ r.expr }}</code>{% if r.transform %}<div class="muted">{{ r.transform|join(', ') }}</div>{% endif %}</td>
+              <td>{{ r.priority }}</td>
+              <td>{% if r.enabled %}<span class="tag ok">启用</span>{% else %}<span class="tag">停用</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <details class="help" style="margin-top:12px">
+      <summary>版本锁定与历史可查的规则</summary>
+      <ul class="list small" style="margin-bottom:0">
+        <li>dry-run 预览会记录 <code>run_id + ruleset_ref + rules_digest + 完整规则快照</code>；同一 <code>run_id</code> 永远对应同一套规则。</li>
+        <li>提交可以带 <code>run_id</code>：严格按该预览锁定的快照求值与写库，后续发布改不到它。</li>
+        <li>生产版本只追加不覆盖；旧版本的规则原文、预览与提交回执均可回看。</li>
+        <li>发布失败（校验不通过、写入异常）会整体回滚，生产版本保持原样，不会出现半套规则。</li>
+      </ul>
+    </details>
+  </div>
+</div>
+{% endblock %}

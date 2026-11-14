@@ -6,7 +6,7 @@
 <button type="button" class="btn secondary small" data-export-csv="submissions-table">导出 CSV</button>
 <a class="btn small" href="/workbench?doc=CG-2026-0001&run=1">回工作台</a>
 {% endblock %}
-{% block status_left %}replay = 命中幂等键返回既有回执（不新增记录） · stale_rejected = 同号改内容未升版被 409 拒绝{% endblock %}
+{% block status_left %}replay = 命中幂等键返回既有回执（不新增记录） · stale_rejected = 同号改内容未升版被 409 拒绝 · 每行锁定其规则版本{% endblock %}
 {% block status_right %}{% if receipt %}当前回执 <code>{{ receipt.receipt_no }}</code>{% else %}{{ app_name }}{% endif %}{% endblock %}
 
 {% block content %}
@@ -35,9 +35,9 @@
     <div class="k-note">幂等命中，未新增记录</div>
   </div>
   <div class="kpi">
-    <div class="k-label">规则覆盖</div>
-    <div class="k-value">{{ override_count }}</div>
-    <div class="k-note">优先级/停用覆盖条数</div>
+    <div class="k-label">规则版本</div>
+    <div class="k-value">{{ versions|length }}</div>
+    <div class="k-note">生产 v{{ versions[-1].version if versions else '—' }} · 历史全部可查</div>
   </div>
 </div>
 
@@ -59,13 +59,18 @@
   </div>
   <div class="table-wrap roomy">
     <table class="dense" id="submissions-table">
-      <thead><tr><th>回执号</th><th>单据号</th><th>版本</th><th>幂等键</th><th>payload sha256</th><th>提交时间</th><th>replay</th><th></th></tr></thead>
+      <thead><tr><th>回执号</th><th>单据号</th><th>版本</th><th>锁定规则版本</th><th>幂等键</th><th>payload sha256</th><th>提交时间</th><th>replay</th><th></th></tr></thead>
       <tbody>
       {% for s in submissions %}
         <tr data-doc="{{ s.doc_no }}" data-replay="{{ '1' if s.replayed_times else '0' }}">
           <td><code>{{ s.receipt_no }}</code></td>
           <td>{{ s.doc_no }}</td>
           <td>v{{ s.version }}</td>
+          <td class="small">
+            <a href="/rules?version={{ s.ruleset_ref }}"><code>{{ s.ruleset_ref or '—' }}</code></a>
+            <div class="muted">{{ '草稿 r' ~ s.draft_revision if s.draft_revision else '生产版本' }}
+              {% if s.ruleset_version %}· 规则内容对应生产 v{{ s.ruleset_version }}{% endif %}</div>
+          </td>
           <td><code title="{{ s.idem_key }}">{{ s.idem_key_short }}…</code></td>
           <td><code>{{ s.payload_sha_short }}…</code></td>
           <td class="small muted nowrap">{{ s.created_at }}</td>
@@ -75,7 +80,7 @@
           <td><a class="small" href="/review?receipt={{ s.receipt_no }}">回执详情</a></td>
         </tr>
       {% else %}
-        <tr data-placeholder="1"><td colspan="8" class="muted">还没有提交记录。去 <a href="/workbench?doc=CG-2026-0001&run=1">工作台</a> 跑 dry-run 并提交一次。</td></tr>
+        <tr data-placeholder="1"><td colspan="9" class="muted">还没有提交记录。去 <a href="/workbench?doc=CG-2026-0001&run=1">工作台</a> 跑 dry-run 并提交一次。</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -151,27 +156,51 @@
 
     <section class="panel">
       <div class="panel-head">
-        <h2>规则覆盖（{{ override_count }} 条）</h2>
-        <div class="panel-actions"><span class="tag">SQLite 持久化</span></div>
+        <h2>规则版本与各版本提交数</h2>
+        <div class="panel-actions">
+          <span class="tag">{{ versions|length }} 个生产版本</span>
+          <a class="btn secondary small" href="/rules">规则版本与发布</a>
+        </div>
       </div>
       <div class="table-wrap auto">
         <table class="dense">
-          <thead><tr><th>规则</th><th>优先级</th><th>启用</th></tr></thead>
+          <thead><tr><th>版本</th><th>发布信息</th><th class="num">按此版本规则提交</th><th class="num">直接锁定该版本号</th></tr></thead>
           <tbody>
-          {% for o in overrides %}
-            <tr><td><code>{{ o.rule_id }}</code></td><td>{{ o.priority if o.priority is not none else '默认' }}</td>
-                <td>{{ '启用' if o.enabled else '已停用' }}</td></tr>
+          {% for v in versions|reverse %}
+            <tr><td><code>{{ v.ref }}</code><div class="small muted">{{ v.digest[:12] }}…</div></td>
+                <td class="small">{{ v.published_at }}{% if v.revision %} · 来自草稿 r{{ v.revision }}{% endif %}
+                  {% if v.note %}<div class="muted">{{ v.note }}</div>{% endif %}</td>
+                <td class="num">{{ v.submission_count }}</td>
+                <td class="num">{{ v.locked_ref_count }}</td></tr>
           {% else %}
-            <tr><td colspan="3" class="muted">当前所有规则都用样例默认优先级（没有覆盖记录）。</td></tr>
+            <tr><td colspan="4" class="muted">还没有规则版本。</td></tr>
           {% endfor %}
           </tbody>
         </table>
       </div>
-      <div class="panel-actions">
-        <form method="post" action="/workbench/reset">
-          <input type="hidden" name="doc" value="CG-2026-0001">
-          <button type="submit" class="secondary small">清除规则覆盖，恢复样例默认</button>
-        </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>规则版本审计（{{ ruleset_events|length }} 条）</h2>
+        <div class="panel-actions"><span class="tag">publish / draft_edit / draft_seed</span></div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th>时间</th><th>动作</th><th>引用</th><th>说明</th></tr></thead>
+          <tbody>
+          {% for e in ruleset_events %}
+            <tr>
+              <td class="small muted nowrap">{{ e.created_at }}</td>
+              <td>{% if e.action == 'publish' %}<span class="tag ok">publish</span>{% else %}<span class="tag warn">{{ e.action }}</span>{% endif %}</td>
+              <td><code>{{ e.ref or '—' }}</code></td>
+              <td class="small">{{ e.detail }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="muted">还没有规则版本事件。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
       </div>
     </section>
   </div>
@@ -193,6 +222,12 @@
             <tr><th>单据 / 版本</th><td><code>{{ receipt.doc_no }}</code> v{{ receipt.version }}</td></tr>
             <tr><th>幂等键</th><td><code class="mono">{{ receipt.idem_key }}</code></td></tr>
             <tr><th>payload sha256</th><td><code class="mono">{{ receipt.payload_sha }}</code></td></tr>
+            <tr><th>锁定规则版本</th><td>
+              <a href="/rules?version={{ receipt.ruleset_ref }}"><code>{{ receipt.ruleset_ref or '—' }}</code></a>
+              {% if receipt.ruleset_version %}<div class="small muted">该快照等同于生产版本 v{{ receipt.ruleset_version }}</div>{% endif %}
+              {% if receipt.rules_digest %}<div class="small muted">规则快照 <code>{{ receipt.rules_digest_short }}…</code></div>{% endif %}
+            </td></tr>
+            <tr><th>预览 run_id</th><td><a href="/result/{{ receipt.run_id }}"><code>{{ receipt.run_id or '—' }}</code></a></td></tr>
             <tr><th>提交时间</th><td>{{ receipt.created_at }}</td></tr>
             <tr><th>重复提交次数</th><td>
               {% if receipt.replayed_times %}<span class="tag warn">replayed × {{ receipt.replayed_times }}</span>
@@ -216,6 +251,25 @@
           <summary>payload JSON</summary>
           <pre style="margin:6px 0 0">{{ receipt.payload | pretty_json }}</pre>
         </details>
+        {% if receipt.rules_snapshot %}
+        <details class="help" style="margin-top:10px">
+          <summary>提交时锁定的规则快照（{{ receipt.rules_snapshot|length }} 条，历史可查）</summary>
+          <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>规则</th><th>目标</th><th>表达式</th><th>优先级</th><th>启用</th></tr></thead>
+            <tbody>
+            {% for r in receipt.rules_snapshot %}
+              <tr {% if not r.enabled %}class="muted"{% endif %}>
+                <td><code>{{ r.id }}</code></td><td><code>{{ r.target }}</code></td>
+                <td class="small"><code>{{ r.expr }}</code></td><td>{{ r.priority }}</td>
+                <td>{{ '启用' if r.enabled else '停用' }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </details>
+        {% endif %}
         {% else %}
         <div class="empty">
           <strong>还没有可查看的回执</strong>

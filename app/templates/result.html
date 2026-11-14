@@ -1,20 +1,21 @@
 {% extends "base.html" %}
 {% block title %}dry-run 结果 · {{ run.run_id }}{% endblock %}
 {% block crumb %}dry-run 结果{% endblock %}
-{% block meta %}<span class="dot {% if run.submittable %}ok{% else %}err{% endif %}"></span>{% if run.submittable %}可提交{% else %}不可提交{% endif %} · 单据 {{ run.doc_no }} v{{ run.version }}{% endblock %}
+{% block meta %}<span class="dot {% if run.submittable %}ok{% else %}err{% endif %}"></span>{% if run.submittable %}可提交{% else %}不可提交{% endif %} · 单据 {{ run.doc_no }} v{{ run.version }} · 锁版 {{ run.ruleset_ref }}{% endblock %}
 {% block actions %}
 <a class="btn secondary small" href="/workbench?doc={{ run.doc_no }}&run=1">回工作台</a>
 {% if run.submittable %}
 <form method="post" action="/workbench/submit" data-json-submit data-doc-no="{{ run.doc_no }}" style="display:inline-flex">
   <input type="hidden" name="doc_no" value="{{ run.doc_no }}">
   <input type="hidden" name="version" value="{{ run.version }}">
-  <button type="submit" class="btn small">按此结果提交</button>
+  <input type="hidden" name="run_id" value="{{ run.run_id }}">
+  <button type="submit" class="btn small">按此锁定版本提交</button>
 </form>
 {% else %}
 <span class="btn small" aria-disabled="true" style="opacity:.55;pointer-events:none">不可提交（{{ run.stats.conflict_count }} 冲突 / {{ run.stats.error_count }} 校验错误）</span>
 {% endif %}
 {% endblock %}
-{% block status_left %}规则集「{{ run.ruleset }}」 · 规则快照 <code>{{ run.rules_digest[:12] }}…</code> · 生成于 {{ run.created_at }}{% endblock %}
+{% block status_left %}规则集「{{ run.ruleset }}」 · 锁定 {{ run.ruleset_ref }}（{{ run.ruleset_kind_label }}） · 快照 <code>{{ run.rules_digest[:12] }}…</code> · 生成于 {{ run.created_at }}{% endblock %}
 {% block status_right %}run_id <code>{{ run.run_id }}</code>{% endblock %}
 
 {% block content %}
@@ -25,12 +26,14 @@
     <h1 class="page-title">dry-run 结果 · {{ run.run_id }}</h1>
     <p class="page-sub">
       单据 <code>{{ run.doc_no }}</code> v{{ run.version }} ·
-      规则集「{{ run.ruleset }}」 · 规则快照 <code>{{ run.rules_digest[:12] }}…</code> ·
+      规则集「{{ run.ruleset }}」 · <strong>锁定 {{ run.ruleset_ref }}</strong>（{{ run.ruleset_kind_label }}）·
+      快照 <code>{{ run.rules_digest[:12] }}…</code> ·
       生成于 {{ run.created_at }}
       {% if run.preview_created_at %}· 预览缓存于 {{ run.preview_created_at }}{% endif %}
       ·
       {% if run.submittable %}
-        <span class="tag ok">可提交</span> 12 个目标字段全部可定值并通过契约校验，可提交落库。
+        <span class="tag ok">可提交</span> 12 个目标字段全部可定值并通过契约校验，可提交落库；
+        提交时按此锁定版本求值，后续发布不会改变字段依据与 payload。
       {% else %}
         <span class="tag err">不可提交</span> 存在 {{ run.stats.conflict_count }} 条未决冲突、
         {{ run.stats.error_count }} 条校验错误；此时提交会返回 HTTP 422。
@@ -73,6 +76,7 @@
       <button type="button" data-tab-target="tab-map" class="active">字段映射</button>
       <button type="button" data-tab-target="tab-conflict">冲突与校验</button>
       <button type="button" data-tab-target="tab-payload">载荷</button>
+      <button type="button" data-tab-target="tab-ruleset">锁定规则快照</button>
     </div>
     <div class="panel-actions">
       <span class="tag">{{ run.targets|length }} 个目标字段</span>
@@ -225,6 +229,36 @@
         <p class="small muted" style="margin-bottom:0">payload sha256：<code>{{ run.payload_sha }}</code> · 幂等键只在 payload 完全一致时重复，
           重复提交返回既有回执且 <code>replayed=true</code>。</p>
       </details>
+    </div>
+  </div>
+
+  <div id="tab-ruleset" class="tab-panel" hidden>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          锁定版本 <strong>{{ run.ruleset_ref }}</strong>（{{ run.ruleset_kind_label }}，共
+          {{ run.rules_snapshot|length if run.rules_snapshot else run.rules_active|length }} 条规则，
+          其中 {{ run.disabled_rules|length }} 条停用）
+          {% if run.lock_check and not run.lock_check.ok %}<span class="tag err">快照摘要校验失败</span>
+          {% elif run.lock_check %}<span class="tag ok">快照摘要校验通过</span>{% endif %}
+          · 历史依据永久保留，后续发布不会修改本页内容
+        </p>
+      </div>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>规则</th><th>目标</th><th>表达式</th><th>优先级</th><th>启用</th></tr></thead>
+          <tbody>
+          {% for r in (run.rules_snapshot or []) %}
+            <tr {% if not r.enabled %}class="muted"{% endif %}>
+              <td><code>{{ r.id }}</code></td>
+              <td><code>{{ r.target }}</code></td>
+              <td class="small"><code>{{ r.expr }}</code>{% if r.transform %}<div class="muted">{{ r.transform|join(', ') }}</div>{% endif %}</td>
+              <td>{{ r.priority }}</td>
+              <td>{% if r.enabled %}<span class="tag ok">启用</span>{% else %}<span class="tag">停用</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </div>

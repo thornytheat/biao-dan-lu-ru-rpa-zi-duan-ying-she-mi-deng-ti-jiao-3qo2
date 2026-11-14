@@ -2,20 +2,23 @@
 {% block title %}映射工作台 · {{ app_name }}{% endblock %}
 {% block crumb %}映射工作台{% endblock %}
 {% block meta %}<span class="dot {% if run and not run.submittable %}warn{% else %}ok{% endif %}"></span>
-{% if run %}单据 {{ run.doc_no }} v{{ run.doc_version }} · {% if run.submittable %}可提交{% else %}{{ run.stats.conflict_count }} 冲突 / {{ run.stats.error_count }} 校验错误{% endif %}{% else %}无可用单据{% endif %}{% endblock %}
+{% if run %}单据 {{ run.doc_no }} v{{ run.doc_version }} · {% if run.submittable %}可提交{% else %}{{ run.stats.conflict_count }} 冲突 / {{ run.stats.error_count }} 校验错误{% endif %}
+· 锁版 <code>{{ run.ruleset_ref }}</code>{% else %}无可用单据{% endif %}{% endblock %}
 {% block actions %}
-<button type="submit" form="rules-form" class="btn secondary small">保存并重跑</button>
-<button type="submit" form="run-form" name="run" value="1" class="btn small">运行 dry-run</button>
+<button type="submit" form="rules-form" class="btn secondary small">保存到草稿并预览</button>
+<button type="submit" form="run-form" name="run" value="1" class="btn small">运行 dry-run（锁定此版本）</button>
 {% endblock %}
-{% block status_left %}规则覆盖 {{ override_count }} 条 · 规则集 {{ run.ruleset if run else '—' }} · dry-run 只写预览快照，不写业务记录{% endblock %}
+{% block status_left %}生产版本 v{{ production.version if production else '—' }} · 草稿 {{ draft.ref if draft else '—' }}（{{ draft_diff|length }} 条未发布改动）· dry-run 只写预览快照，不写业务记录{% endblock %}
 {% block status_right %}{% if run %}预览 run_id <code>{{ run.run_id }}</code>{% else %}{{ app_name }}{% endif %}{% endblock %}
 
 {% block content %}
 <div class="page-head">
   <div>
     <h1 class="page-title">映射工作台</h1>
-    <p class="page-sub">选一张源单据 → 看规则怎么命中 → 运行 dry-run 看冲突与校验错误 → 改规则优先级后重跑 → 通过后提交拿回执。
-      规则覆盖（优先级/停用）会写进 SQLite，刷新页面和重启容器都保留；「恢复样例默认」可清空覆盖。</p>
+    <p class="page-sub">选一张源单据 → 看规则怎么命中 → 运行 dry-run 锁定规则版本并预览 →
+      改优先级只会写入<b>独立草稿</b>（生产版本不受影响）→ 按样例预览确认后，去
+      <a href="/rules">规则版本</a> 整套发布。每个预览/提交都锁定同一规则快照，
+      后续发布改不到它的字段依据和提交内容。</p>
   </div>
 </div>
 
@@ -27,6 +30,7 @@
     </div>
     <div class="panel-body">
       <form method="get" action="/workbench" id="run-form">
+        <input type="hidden" name="rules" value="{{ ruleset.ref }}" id="run-ruleset-ref">
         <div class="field">
           <label for="doc">源单据</label>
           <select id="doc" name="doc">
@@ -45,7 +49,8 @@
           用当前单据直接重跑：<a href="/workbench?doc={{ selected }}&run=1">/workbench?doc={{ selected }}&amp;run=1</a>
         </p>
         <p class="small" style="margin-bottom:0">
-          {% if override_count %}<span class="tag warn">{{ override_count }} 条规则被覆盖</span>{% else %}<span class="tag ok">规则为样例默认优先级</span>{% endif %}
+          {% if run %}<span class="tag {% if run.ruleset_kind == 'draft' %}warn{% else %}ok{% endif %}">锁定 {{ run.ruleset_ref }} · {{ run.ruleset_kind_label }}</span>{% endif %}
+          {% if draft_diff %}<span class="tag warn">草稿有 {{ draft_diff|length }} 条未发布改动</span>{% endif %}
           {% if run %}· 预览 run_id <code>{{ run.run_id }}</code>{% endif %}
         </p>
       </form>
@@ -71,14 +76,15 @@
         <p class="small muted" style="margin-bottom:0">
           同一 target 取最高 priority；同 priority 多值不同即冲突（冲突字段无法定值 → 校验报
           <code>conflict_unresolved</code>，提交会被 422 拒绝）。调高某条规则的优先级即可让它在冲突中胜出。
-          保存会立即按新优先级重跑 dry-run（预览不写业务记录）。
+          <b>保存只会生成新的草稿修订</b>，本页预览立刻按草稿求值；生产版本要等
+          <a href="/rules">规则版本</a>页整套发布后才切换。
         </p>
       </details>
     </div>
     <div class="panel-actions">
       <button type="submit" form="run-form" name="run" value="1">运行 dry-run</button>
-      <button type="submit" form="rules-form" class="secondary">保存并重跑</button>
-      <button type="submit" form="rules-form" formaction="/workbench/reset" formmethod="post" class="secondary">恢复默认</button>
+      <button type="submit" form="rules-form" class="secondary">保存到草稿并预览</button>
+      <button type="submit" form="rules-form" formaction="/workbench/reset" formmethod="post" class="secondary">丢弃草稿改动</button>
     </div>
   </section>
 
@@ -104,24 +110,74 @@
         <div class="k-value">{{ run.stats.rules_miss if run else '—' }}</div>
         <div class="k-note">可空字段不阻断提交</div>
       </div>
-      <div class="kpi">
-        <div class="k-label">规则覆盖</div>
-        <div class="k-value">{{ override_count }}</div>
-        <div class="k-note">SQLite 持久化</div>
+      <div class="kpi {% if draft_diff %}warn{% endif %}">
+        <div class="k-label">草稿未发布改动</div>
+        <div class="k-value">{{ draft_diff|length }}</div>
+        <div class="k-note">生产版本 v{{ production.version if production else '—' }} 不受影响</div>
       </div>
     </div>
 
     <section class="panel" id="m2">
       <div class="panel-head">
-        <h2>映射规则（{{ rules|length }} 条，可改优先级 / 停用）</h2>
+        <h2>规则版本（生产 / 预览锁版 / 各版本提交数）</h2>
         <div class="panel-actions">
-          <span class="tag">改完点保存并重跑</span>
+          <a class="btn secondary small" href="/rules">规则版本与发布</a>
+        </div>
+      </div>
+      <div class="table-wrap auto">
+        <table class="dense">
+          <thead><tr><th>版本</th><th>角色</th><th>规则摘要</th><th class="num">按此规则提交</th><th class="num">预览数</th><th></th></tr></thead>
+          <tbody>
+          {% for v in overview.versions|reverse %}
+            <tr {% if v.is_production %}class="selected"{% endif %}>
+              <td><code>{{ v.ref }}</code><div class="small muted">{{ v.published_at }}</div></td>
+              <td>{% if v.is_production %}<span class="tag ok">生产版本</span>{% else %}<span class="tag">历史版本</span>{% endif %}</td>
+              <td class="small"><code>{{ v.digest[:12] }}…</code> · {{ v.rules|length }} 条</td>
+              <td class="num">{{ v.submission_count }}</td>
+              <td class="num">{{ v.preview_count }}</td>
+              <td><a class="small" href="/workbench?doc={{ selected }}&run=1&rules={{ v.ref }}">按此版预览</a></td>
+            </tr>
+          {% endfor %}
+          {% if overview.draft and overview.draft.ref != (overview.production.ref if overview.production else '') %}
+            <tr class="selected">
+              <td><code>{{ overview.draft.ref }}</code><div class="small muted">{{ overview.draft.created_at }}</div></td>
+              <td><span class="tag warn">当前草稿（未发布）</span></td>
+              <td class="small"><code>{{ overview.draft.digest[:12] }}…</code> · {{ overview.draft.diff|length }} 条改动</td>
+              <td class="num">{{ overview.draft.submission_count }}</td>
+              <td class="num">{{ overview.draft.preview_count }}</td>
+              <td><a class="small" href="/workbench?doc={{ selected }}&run=1&rules={{ overview.draft.ref }}">按草稿预览</a></td>
+            </tr>
+          {% endif %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          当前预览锁定 <strong>{{ run.ruleset_ref if run else '—' }}</strong>
+          {% if run %}（{{ run.ruleset_kind_label }}{% if run.published_version %}，已发布为 v{{ run.published_version }}{% endif %}）{% endif %}。
+          预览和提交都保存完整规则快照，之后发布新版本不会改动它们。
+        </p>
+      </div>
+    </section>
+
+    <section class="panel" id="m2-rules">
+      <div class="panel-head">
+        <h2>映射规则（{{ rules|length }} 条，编辑只写入草稿）</h2>
+        <div class="panel-actions">
+          <span class="tag">改完点保存到草稿并预览</span>
           <a class="btn secondary small" href="/api/rules">看 JSON</a>
         </div>
       </div>
       <form method="post" action="/workbench/rules" id="rules-form">
         <input type="hidden" name="doc" value="{{ selected }}">
         <input type="hidden" name="version" value="{{ version if version else '' }}">
+        <input type="hidden" name="rules_ref" value="{{ ruleset.ref }}">
+        {% if ruleset.kind == 'production' and production and ruleset.version != production.version %}
+        <div class="alert alert-info" style="margin:8px 12px 0">
+          本页预览的是历史生产版本 {{ ruleset.ref }}。保存会以 {{ ruleset.ref }} 为基线创建新草稿；
+          发布时整套替换当前生产 v{{ production.version }}，旧版本仍完整保留，可随时回查。
+        </div>
+        {% endif %}
         <div class="table-wrap roomy">
           <table class="dense">
             <thead>
@@ -130,17 +186,18 @@
             <tbody>
             {% for rule in rules %}
               {% set hit = rule.hit %}
-              <tr>
+              <tr {% if not rule.enabled %}class="muted"{% endif %}>
                 <td><code>{{ rule.id }}</code><div class="small muted">{{ rule.note }}</div></td>
                 <td><code>{{ rule.target }}</code></td>
                 <td><code>{{ rule.expr }}</code>{% if rule.transform %}<div class="small muted">变换：{{ rule.transform|join(', ') }}</div>{% endif %}</td>
                 <td>
                   <input type="number" name="priority_{{ rule.id }}" value="{{ rule.priority }}" min="0" max="999" step="1">
-                  <div class="small muted">默认 {{ rule.base_priority }}{% if rule.overridden %} · <span class="tag warn">已覆盖</span>{% endif %}</div>
+                  <div class="small muted">生产 v{{ production.version if production else '—' }}：{{ rule.base_priority }}{% if rule.overridden %} · <span class="tag warn">未发布改动</span>{% endif %}</div>
                 </td>
                 <td><input type="checkbox" name="enabled_{{ rule.id }}" {% if rule.enabled %}checked{% endif %}></td>
                 <td class="small">
-                  {% if hit %}
+                  {% if not rule.enabled %}<span class="tag">已停用</span>
+                  {% elif hit %}
                     {% if hit.status == 'ok' %}<span class="tag ok">{{ hit.value_display }}</span>
                     {% elif hit.status == 'miss' %}<span class="tag warn">未命中</span><div class="muted">{{ hit.reason }}</div>
                     {% else %}<span class="tag err">表达式错误</span><div class="muted">{{ hit.reason }}</div>{% endif %}
@@ -153,9 +210,10 @@
         </div>
       </form>
       <div class="panel-actions">
-        <button type="submit" form="rules-form">保存并重跑</button>
-        <button type="submit" form="rules-form" formaction="/workbench/reset" formmethod="post" class="secondary">恢复样例默认</button>
-        <span class="small muted" style="align-self:center">保存会立即按新优先级重跑 dry-run（预览不写业务记录）。</span>
+        <button type="submit" form="rules-form">保存到草稿并预览</button>
+        <button type="submit" form="rules-form" formaction="/workbench/reset" formmethod="post" class="secondary">丢弃草稿改动</button>
+        <a class="btn secondary small" href="/rules">去发布整套版本</a>
+        <span class="small muted" style="align-self:center">保存生成新草稿修订；生产版本只在「规则版本」页发布时整套切换。</span>
       </div>
     </section>
 
@@ -281,6 +339,7 @@
           幂等键 <code title="{{ run.idempotency_key }}">{{ run.idempotency_key_short }}…</code>
           · payload sha256 <code>{{ run.payload_sha[:12] }}…</code>
           · 规则快照 <code>{{ run.rules_digest[:12] }}…</code>
+          · 锁定版本 <code>{{ run.ruleset_ref }}</code>（{{ run.ruleset_kind_label }}）
         </p>
       </div>
     </section>
@@ -294,17 +353,23 @@
         {% if run.submittable %}
         <form method="post" action="/workbench/submit" data-json-submit data-doc-no="{{ run.doc_no }}">
           <input type="hidden" name="doc_no" value="{{ run.doc_no }}">
+          {% if show_run %}<input type="hidden" name="run_id" value="{{ run.run_id }}">{% endif %}
           <div class="field" style="max-width:240px">
             <label for="submit-version">提交版本 version（同号改内容必须升版，否则 409）</label>
             <input id="submit-version" name="version" type="number" min="1" step="1" value="{{ run.version }}">
           </div>
-          <button type="submit">提交并取回执</button>
+          <button type="submit">{% if show_run %}按锁定版本 {{ run.ruleset_ref }} 提交并取回执{% else %}运行 dry-run 后提交{% endif %}</button>
+          <p class="small muted" style="margin-top:8px">
+            {% if show_run %}提交严格使用预览 {{ run.run_id }} 锁定的规则快照（{{ run.ruleset_kind_label }} {{ run.ruleset_ref }}）；
+            之后发布新版本也不会改变这次提交的字段依据与 payload。
+            {% else %}当前填写只是预览，尚未锁定版本；点「运行 dry-run」后才会生成可提交的锁版预览。{% endif %}
+          </p>
           <p id="form-error" class="alert alert-error" hidden></p>
         </form>
         {% else %}
         <p class="small" style="margin:0">
           当前有 {{ run.stats.conflict_count }} 条冲突、{{ run.stats.error_count }} 条校验错误，提交按钮不可用（后端也会返回 422）。
-          可先按冲突建议调整优先级，再「保存并重跑」。
+          可先按冲突建议调整优先级，保存到草稿后重跑预览，确认无误再发布。
         </p>
         {% endif %}
         <p class="small muted" id="run-error" hidden></p>

@@ -46,6 +46,8 @@
       if (btn) btn.disabled = true;
       try {
         var payload = { doc_no: (qs('#doc') || {}).value };
+        var ref = qs('input[name="rules"]', runForm);
+        if (ref && ref.value) payload.ruleset_ref = ref.value;
         var v = versionOf(runForm);
         if (v) payload.version = v;
         var data = await postJSON('/api/dry-run', payload);
@@ -65,6 +67,8 @@
       if (btn) btn.disabled = true;
       try {
         var payload = { doc_no: form.getAttribute('data-doc-no') };
+        var runId = qs('input[name="run_id"]', form);
+        if (runId && runId.value) payload.run_id = runId.value;
         var v = versionOf(form);
         if (v) payload.version = v;
         var data = await postJSON('/api/submit', payload);
